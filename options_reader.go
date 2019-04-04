@@ -159,3 +159,8 @@ func (r *ClientOptionsReader) HTTPHeaders() http.Header {
 	h := r.options.HTTPHeaders
 	return h
 }
+
+func (r *ClientOptionsReader) ForcePersist() bool {
+	f := r.options.ForcePersist
+	return f
+}

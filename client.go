@@ -92,6 +92,9 @@ type Client interface {
 	// OptionsReader returns a ClientOptionsReader which is a copy of the clientoptions
 	// in use by the client.
 	OptionsReader() ClientOptionsReader
+	// ForceResume attempts to complete any persisted messages and returns an array of Tokens
+	// that can be used to keep track of each resumed message
+	ForceResume() []Token
 }
 
 // client implements the Client interface
@@ -354,7 +357,7 @@ func (c *client) Connect() Token {
 		// Take care of any messages in the store
 		if !c.options.CleanSession {
 			c.resume(c.options.ResumeSubs)
-		} else {
+		} else if c.options.ForcePersist == false {
 			c.persist.Reset()
 		}
 
@@ -738,9 +741,14 @@ func (c *client) reserveStoredPublishIDs() {
 	}
 }
 
+func (c *client) ForceResume() []Token {
+	return c.resume(c.options.ResumeSubs)
+}
+
 // Load all stored messages and resend them
 // Call this to ensure QOS > 1,2 even after an application crash
-func (c *client) resume(subscription bool) {
+func (c *client) resume(subscription bool) []Token {
+	var tokens []Token
 
 	storedKeys := c.persist.All()
 	for _, key := range storedKeys {
@@ -755,6 +763,7 @@ func (c *client) resume(subscription bool) {
 				if subscription {
 					DEBUG.Println(STR, fmt.Sprintf("loaded pending subscribe (%d)", details.MessageID))
 					token := newToken(packets.Subscribe).(*SubscribeToken)
+					tokens = append(tokens, token)
 					select {
 					case c.oboundP <- &PacketAndToken{p: packet, t: token}:
 					case <-c.stop:
@@ -764,6 +773,7 @@ func (c *client) resume(subscription bool) {
 				if subscription {
 					DEBUG.Println(STR, fmt.Sprintf("loaded pending unsubscribe (%d)", details.MessageID))
 					token := newToken(packets.Unsubscribe).(*UnsubscribeToken)
+					tokens = append(tokens, token)
 					select {
 					case c.oboundP <- &PacketAndToken{p: packet, t: token}:
 					case <-c.stop:
@@ -781,6 +791,7 @@ func (c *client) resume(subscription bool) {
 				c.claimID(token, details.MessageID)
 				DEBUG.Println(STR, fmt.Sprintf("loaded pending publish (%d)", details.MessageID))
 				DEBUG.Println(STR, details)
+				tokens = append(tokens, token)
 				select {
 				case c.obound <- &PacketAndToken{p: packet, t: token}:
 				case <-c.stop:
@@ -803,6 +814,8 @@ func (c *client) resume(subscription bool) {
 			}
 		}
 	}
+
+	return tokens
 }
 
 // Unsubscribe will end the subscription from each of the topics provided.
