@@ -35,7 +35,7 @@ const (
 	midMax uint16 = 65535
 )
 
-func (mids *messageIds) cleanUp() {
+func (mids *messageIds) cleanUp(milieu *Milieu) {
 	mids.Lock()
 	for _, token := range mids.index {
 		switch token.(type) {
@@ -52,7 +52,7 @@ func (mids *messageIds) cleanUp() {
 	}
 	mids.index = make(map[uint16]tokenCompletor)
 	mids.Unlock()
-	DEBUG.Println(MID, "cleaned up")
+	DEBUGD.Dumpln(*milieu, MID, "cleaned up")
 }
 
 func (mids *messageIds) freeID(id uint16) {

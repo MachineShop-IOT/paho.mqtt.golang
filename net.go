@@ -107,13 +107,13 @@ func incoming(c *client) {
 
 	defer c.workers.Done()
 
-	DEBUG.Println(NET, "incoming started")
+	DEBUGD.Dumpln(*c.milieu, NET, "incoming started")
 
 	for {
 		if cp, err = packets.ReadPacket(c.conn); err != nil {
 			break
 		}
-		DEBUG.Println(NET, "Received Message")
+		DEBUGD.Dumpln(*c.milieu, NET, "Received Message")
 		select {
 		case c.ibound <- cp:
 			// Notify keepalive logic that we recently received a packet
@@ -123,7 +123,7 @@ func incoming(c *client) {
 		case <-c.stop:
 			// This avoids a deadlock should a message arrive while shutting down.
 			// In that case the "reader" of c.ibound might already be gone
-			WARN.Println(NET, "incoming dropped a received message during shutdown")
+			WARND.Dumpln(*c.milieu, NET, "incoming dropped a received message during shutdown")
 			break
 		}
 	}
@@ -131,11 +131,11 @@ func incoming(c *client) {
 	// If disconnect is in progress, swallow error and return
 	select {
 	case <-c.stop:
-		DEBUG.Println(NET, "incoming stopped")
+		DEBUGD.Dumpln(*c.milieu, NET, "incoming stopped")
 		return
 	// Not trying to disconnect, send the error to the errors channel
 	default:
-		ERROR.Println(NET, "incoming stopped with error", err)
+		ERRORD.Dumpln(*c.milieu, NET, "incoming stopped with error", err)
 		signalError(c.errors, err)
 		return
 	}
@@ -145,13 +145,13 @@ func incoming(c *client) {
 // actually send outgoing message to the wire
 func outgoing(c *client) {
 	defer c.workers.Done()
-	DEBUG.Println(NET, "outgoing started")
+	DEBUGD.Dumpln(*c.milieu, NET, "outgoing started")
 
 	for {
-		DEBUG.Println(NET, "outgoing waiting for an outbound message")
+		DEBUGD.Dumpln(*c.milieu, NET, "outgoing waiting for an outbound message")
 		select {
 		case <-c.stop:
-			DEBUG.Println(NET, "outgoing stopped")
+			DEBUGD.Dumpln(*c.milieu, NET, "outgoing stopped")
 			return
 		case pub := <-c.obound:
 			msg := pub.p.(*packets.PublishPacket)
@@ -161,7 +161,7 @@ func outgoing(c *client) {
 			}
 
 			if err := msg.Write(c.conn); err != nil {
-				ERROR.Println(NET, "outgoing stopped with error", err)
+				ERRORD.Dumpln(*c.milieu, NET, "outgoing stopped with error", err)
 				pub.t.setError(err)
 				signalError(c.errors, err)
 				return
@@ -176,11 +176,11 @@ func outgoing(c *client) {
 			if msg.Qos == 0 {
 				pub.t.flowComplete()
 			}
-			DEBUG.Println(NET, "obound wrote msg, id:", msg.MessageID)
+			DEBUGD.Dumpln(*c.milieu, NET, "obound wrote msg, id:", msg.MessageID)
 		case msg := <-c.oboundP:
-			DEBUG.Println(NET, "obound priority msg to write, type", reflect.TypeOf(msg.p))
+			DEBUGD.Dumpln(*c.milieu, NET, "obound priority msg to write, type", reflect.TypeOf(msg.p))
 			if err := msg.p.Write(c.conn); err != nil {
-				ERROR.Println(NET, "outgoing stopped with error", err)
+				ERRORD.Dumpln(*c.milieu, NET, "outgoing stopped with error", err)
 				if msg.t != nil {
 					msg.t.setError(err)
 				}
@@ -190,7 +190,7 @@ func outgoing(c *client) {
 			switch msg.p.(type) {
 			case *packets.DisconnectPacket:
 				msg.t.(*DisconnectToken).flowComplete()
-				DEBUG.Println(NET, "outbound wrote disconnect, stopping")
+				DEBUGD.Dumpln(*c.milieu, NET, "outbound wrote disconnect, stopping")
 				return
 			}
 		}
@@ -207,25 +207,25 @@ func outgoing(c *client) {
 // delete messages from store if necessary
 func alllogic(c *client) {
 	defer c.workers.Done()
-	DEBUG.Println(NET, "logic started")
+	DEBUGD.Dumpln(*c.milieu, NET, "logic started")
 
 	for {
-		DEBUG.Println(NET, "logic waiting for msg on ibound")
+		DEBUGD.Dumpln(*c.milieu, NET, "logic waiting for msg on ibound")
 
 		select {
 		case msg := <-c.ibound:
-			DEBUG.Println(NET, "logic got msg on ibound")
-			persistInbound(c.persist, msg)
+			DEBUGD.Dumpln(*c.milieu, NET, "logic got msg on ibound")
+			persistInbound(c.milieu, c.persist, msg)
 			switch m := msg.(type) {
 			case *packets.PingrespPacket:
-				DEBUG.Println(NET, "received pingresp")
+				DEBUGD.Dumpln(*c.milieu, NET, "received pingresp")
 				atomic.StoreInt32(&c.pingOutstanding, 0)
 			case *packets.SubackPacket:
-				DEBUG.Println(NET, "received suback, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received suback, id:", m.MessageID)
 				token := c.getToken(m.MessageID)
 				switch t := token.(type) {
 				case *SubscribeToken:
-					DEBUG.Println(NET, "granted qoss", m.ReturnCodes)
+					DEBUGD.Dumpln(*c.milieu, NET, "granted qoss", m.ReturnCodes)
 					for i, qos := range m.ReturnCodes {
 						t.subResult[t.subs[i]] = qos
 					}
@@ -233,34 +233,34 @@ func alllogic(c *client) {
 				token.flowComplete()
 				c.freeID(m.MessageID)
 			case *packets.UnsubackPacket:
-				DEBUG.Println(NET, "received unsuback, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received unsuback, id:", m.MessageID)
 				c.getToken(m.MessageID).flowComplete()
 				c.freeID(m.MessageID)
 			case *packets.PublishPacket:
-				DEBUG.Println(NET, "received publish, msgId:", m.MessageID)
-				DEBUG.Println(NET, "putting msg on onPubChan")
+				DEBUGD.Dumpln(*c.milieu, NET, "received publish, msgId:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "putting msg on onPubChan")
 				switch m.Qos {
 				case 2:
 					c.incomingPubChan <- m
-					DEBUG.Println(NET, "done putting msg on incomingPubChan")
+					DEBUGD.Dumpln(*c.milieu, NET, "done putting msg on incomingPubChan")
 				case 1:
 					c.incomingPubChan <- m
-					DEBUG.Println(NET, "done putting msg on incomingPubChan")
+					DEBUGD.Dumpln(*c.milieu, NET, "done putting msg on incomingPubChan")
 				case 0:
 					select {
 					case c.incomingPubChan <- m:
 					case <-c.stop:
 					}
-					DEBUG.Println(NET, "done putting msg on incomingPubChan")
+					DEBUGD.Dumpln(*c.milieu, NET, "done putting msg on incomingPubChan")
 				}
 			case *packets.PubackPacket:
-				DEBUG.Println(NET, "received puback, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received puback, id:", m.MessageID)
 				// c.receipts.get(msg.MsgId()) <- Receipt{}
 				// c.receipts.end(msg.MsgId())
 				c.getToken(m.MessageID).flowComplete()
 				c.freeID(m.MessageID)
 			case *packets.PubrecPacket:
-				DEBUG.Println(NET, "received pubrec, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received pubrec, id:", m.MessageID)
 				prel := packets.NewControlPacket(packets.Pubrel).(*packets.PubrelPacket)
 				prel.MessageID = m.MessageID
 				select {
@@ -268,21 +268,21 @@ func alllogic(c *client) {
 				case <-c.stop:
 				}
 			case *packets.PubrelPacket:
-				DEBUG.Println(NET, "received pubrel, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received pubrel, id:", m.MessageID)
 				pc := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
 				pc.MessageID = m.MessageID
-				persistOutbound(c.persist, pc)
+				persistOutbound(c.milieu, c.persist, pc)
 				select {
 				case c.oboundP <- &PacketAndToken{p: pc, t: nil}:
 				case <-c.stop:
 				}
 			case *packets.PubcompPacket:
-				DEBUG.Println(NET, "received pubcomp, id:", m.MessageID)
+				DEBUGD.Dumpln(*c.milieu, NET, "received pubcomp, id:", m.MessageID)
 				c.getToken(m.MessageID).flowComplete()
 				c.freeID(m.MessageID)
 			}
 		case <-c.stop:
-			WARN.Println(NET, "logic stopped")
+			WARND.Dumpln(*c.milieu, NET, "logic stopped")
 			return
 		}
 	}
@@ -294,22 +294,22 @@ func (c *client) ackFunc(packet *packets.PublishPacket) func() {
 		case 2:
 			pr := packets.NewControlPacket(packets.Pubrec).(*packets.PubrecPacket)
 			pr.MessageID = packet.MessageID
-			DEBUG.Println(NET, "putting pubrec msg on obound")
+			DEBUGD.Dumpln(*c.milieu, NET, "putting pubrec msg on obound")
 			select {
 			case c.oboundP <- &PacketAndToken{p: pr, t: nil}:
 			case <-c.stop:
 			}
-			DEBUG.Println(NET, "done putting pubrec msg on obound")
+			DEBUGD.Dumpln(*c.milieu, NET, "done putting pubrec msg on obound")
 		case 1:
 			pa := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
 			pa.MessageID = packet.MessageID
-			DEBUG.Println(NET, "putting puback msg on obound")
-			persistOutbound(c.persist, pa)
+			DEBUGD.Dumpln(*c.milieu, NET, "putting puback msg on obound")
+			persistOutbound(c.milieu, c.persist, pa)
 			select {
 			case c.oboundP <- &PacketAndToken{p: pa, t: nil}:
 			case <-c.stop:
 			}
-			DEBUG.Println(NET, "done putting puback msg on obound")
+			DEBUGD.Dumpln(*c.milieu, NET, "done putting puback msg on obound")
 		case 0:
 			// do nothing, since there is no need to send an ack packet back
 		}
@@ -320,10 +320,10 @@ func errorWatch(c *client) {
 	defer c.workers.Done()
 	select {
 	case <-c.stop:
-		WARN.Println(NET, "errorWatch stopped")
+		WARND.Dumpln(*c.milieu, NET, "errorWatch stopped")
 		return
 	case err := <-c.errors:
-		ERROR.Println(NET, "error triggered, stopping")
+		ERRORD.Dumpln(*c.milieu, NET, "error triggered, stopping")
 		go c.internalConnLost(err)
 		return
 	}
