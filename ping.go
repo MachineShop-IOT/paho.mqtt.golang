@@ -24,7 +24,7 @@ import (
 
 func keepalive(c *client) {
 	defer c.workers.Done()
-	DEBUG.Println(PNG, "keepalive starting")
+	DEBUGD.Dumpln(*c.milieu, PNG, "keepalive starting")
 	var checkInterval int64
 	var pingSent time.Time
 
@@ -40,16 +40,16 @@ func keepalive(c *client) {
 	for {
 		select {
 		case <-c.stop:
-			DEBUG.Println(PNG, "keepalive stopped")
+			DEBUGD.Dumpln(*c.milieu, PNG, "keepalive stopped")
 			return
 		case <-intervalTicker.C:
 			lastSent := c.lastSent.Load().(time.Time)
 			lastReceived := c.lastReceived.Load().(time.Time)
 
-			DEBUG.Println(PNG, "ping check", time.Since(lastSent).Seconds())
+			DEBUGD.Dumpln(*c.milieu, PNG, "ping check", time.Since(lastSent).Seconds())
 			if time.Since(lastSent) >= time.Duration(c.options.KeepAlive*int64(time.Second)) || time.Since(lastReceived) >= time.Duration(c.options.KeepAlive*int64(time.Second)) {
 				if atomic.LoadInt32(&c.pingOutstanding) == 0 {
-					DEBUG.Println(PNG, "keepalive sending ping")
+					DEBUGD.Dumpln(*c.milieu, PNG, "keepalive sending ping")
 					ping := packets.NewControlPacket(packets.Pingreq).(*packets.PingreqPacket)
 					//We don't want to wait behind large messages being sent, the Write call
 					//will block until it it able to send the packet.
@@ -60,7 +60,7 @@ func keepalive(c *client) {
 				}
 			}
 			if atomic.LoadInt32(&c.pingOutstanding) > 0 && time.Now().Sub(pingSent) >= c.options.PingTimeout {
-				CRITICAL.Println(PNG, "pingresp not received, disconnecting")
+				CRITICALD.Dumpln(*c.milieu, PNG, "pingresp not received, disconnecting")
 				c.errors <- errors.New("pingresp not received, disconnecting")
 				return
 			}

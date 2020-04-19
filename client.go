@@ -113,6 +113,7 @@ type client struct {
 	persist         Store
 	options         ClientOptions
 	workers         sync.WaitGroup
+	milieu          *Milieu
 }
 
 // NewClient will create an MQTT v3.1.1 client with all of the options specified
@@ -121,10 +122,11 @@ type client struct {
 // connection) are created before the application is actually ready.
 func NewClient(o *ClientOptions) Client {
 	c := &client{}
+	c.milieu = &Milieu{Client: c}
 	c.options = *o
 
 	if c.options.Store == nil {
-		c.options.Store = NewMemoryStore()
+		c.options.Store = NewMemoryStore().WithMilieu(c.milieu)
 	}
 	switch c.options.ProtocolVersion {
 	case 3, 4:
@@ -208,7 +210,7 @@ var ErrNotConnected = errors.New("Not Connected")
 func (c *client) Connect() Token {
 	var err error
 	t := newToken(packets.Connect).(*ConnectToken)
-	DEBUG.Println(CLI, "Connect()")
+	DEBUGD.Dumpln(*c.milieu, CLI, "Connect()")
 
 	c.obound = make(chan *PacketAndToken, c.options.MessageChannelDepth)
 	c.oboundP = make(chan *PacketAndToken, c.options.MessageChannelDepth)
@@ -233,25 +235,25 @@ func (c *client) Connect() Token {
 			cm := newConnectMsgFromOptions(&c.options, broker)
 			c.options.ProtocolVersion = protocolVersion
 		CONN:
-			DEBUG.Println(CLI, "about to write new connect msg")
+			DEBUGD.Dumpln(*c.milieu, CLI, "about to write new connect msg")
 			c.conn, err = openConnection(broker, c.options.TLSConfig, c.options.ConnectTimeout, c.options.HTTPHeaders)
 			if err == nil {
-				DEBUG.Println(CLI, "socket connected to broker")
+				DEBUGD.Dumpln(*c.milieu, CLI, "socket connected to broker")
 				switch c.options.ProtocolVersion {
 				case 3:
-					DEBUG.Println(CLI, "Using MQTT 3.1 protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1 protocol")
 					cm.ProtocolName = "MQIsdp"
 					cm.ProtocolVersion = 3
 				case 0x83:
-					DEBUG.Println(CLI, "Using MQTT 3.1b protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1b protocol")
 					cm.ProtocolName = "MQIsdp"
 					cm.ProtocolVersion = 0x83
 				case 0x84:
-					DEBUG.Println(CLI, "Using MQTT 3.1.1b protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1.1b protocol")
 					cm.ProtocolName = "MQTT"
 					cm.ProtocolVersion = 0x84
 				default:
-					DEBUG.Println(CLI, "Using MQTT 3.1.1 protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1.1 protocol")
 					c.options.ProtocolVersion = 4
 					cm.ProtocolName = "MQTT"
 					cm.ProtocolVersion = 4
@@ -266,25 +268,26 @@ func (c *client) Connect() Token {
 					}
 					//if the protocol version was explicitly set don't do any fallback
 					if c.options.protocolVersionExplicit {
-						ERROR.Println(CLI, "Connecting to", broker, "CONNACK was not CONN_ACCEPTED, but rather", packets.ConnackReturnCodes[rc])
+						ERRORD.Dumpln(*c.milieu, CLI, "Connecting to", broker, "CONNACK was not CONN_ACCEPTED, but rather", packets.ConnackReturnCodes[rc])
 						continue
 					}
 					if c.options.ProtocolVersion == 4 {
-						DEBUG.Println(CLI, "Trying reconnect using MQTT 3.1 protocol")
+						DEBUGD.Dumpln(*c.milieu, CLI, "Trying reconnect using MQTT 3.1 protocol")
 						c.options.ProtocolVersion = 3
 						goto CONN
 					}
 				}
+				c.milieu.Broker = broker.String()
 				break
 			} else {
-				ERROR.Println(CLI, err.Error())
-				WARN.Println(CLI, "failed to connect to broker, trying next")
+				ERRORD.Dumpln(*c.milieu, CLI, err.Error())
+				WARND.Dumpln(*c.milieu, CLI, "failed to connect to broker, trying next")
 				rc = packets.ErrNetworkError
 			}
 		}
 
 		if c.conn == nil {
-			ERROR.Println(CLI, "Failed to connect to a broker")
+			ERRORD.Dumpln(*c.milieu, CLI, "Failed to connect to a broker")
 			c.setConnected(disconnected)
 			c.persist.Close()
 			t.returnCode = rc
@@ -310,7 +313,7 @@ func (c *client) Connect() Token {
 		c.msgRouter.matchAndDispatch(c.incomingPubChan, c.options.Order, c)
 
 		c.setConnected(connected)
-		DEBUG.Println(CLI, "client is connected")
+		DEBUGD.Dumpln(*c.milieu, CLI, "client is connected")
 		if c.options.OnConnect != nil {
 			go c.options.OnConnect(c)
 		}
@@ -328,7 +331,7 @@ func (c *client) Connect() Token {
 			c.persist.Reset()
 		}
 
-		DEBUG.Println(CLI, "exit startClient")
+		DEBUGD.Dumpln(*c.milieu, CLI, "exit startClient")
 		t.flowComplete()
 	}()
 	return t
@@ -336,7 +339,7 @@ func (c *client) Connect() Token {
 
 // internal function used to reconnect the client when it loses its connection
 func (c *client) reconnect() {
-	DEBUG.Println(CLI, "enter reconnect")
+	DEBUGD.Dumpln(*c.milieu, CLI, "enter reconnect")
 	var (
 		err error
 
@@ -347,27 +350,27 @@ func (c *client) reconnect() {
 	for rc != 0 && atomic.LoadUint32(&c.status) != disconnected {
 		for _, broker := range c.options.Servers {
 			cm := newConnectMsgFromOptions(&c.options, broker)
-			DEBUG.Println(CLI, "about to write new connect msg")
+			DEBUGD.Dumpln(*c.milieu, CLI, "about to write new connect msg")
 			c.Lock()
 			c.conn, err = openConnection(broker, c.options.TLSConfig, c.options.ConnectTimeout, c.options.HTTPHeaders)
 			c.Unlock()
 			if err == nil {
-				DEBUG.Println(CLI, "socket connected to broker")
+				DEBUGD.Dumpln(*c.milieu, CLI, "socket connected to broker")
 				switch c.options.ProtocolVersion {
 				case 0x83:
-					DEBUG.Println(CLI, "Using MQTT 3.1b protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1b protocol")
 					cm.ProtocolName = "MQIsdp"
 					cm.ProtocolVersion = 0x83
 				case 0x84:
-					DEBUG.Println(CLI, "Using MQTT 3.1.1b protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1.1b protocol")
 					cm.ProtocolName = "MQTT"
 					cm.ProtocolVersion = 0x84
 				case 3:
-					DEBUG.Println(CLI, "Using MQTT 3.1 protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1 protocol")
 					cm.ProtocolName = "MQIsdp"
 					cm.ProtocolVersion = 3
 				default:
-					DEBUG.Println(CLI, "Using MQTT 3.1.1 protocol")
+					DEBUGD.Dumpln(*c.milieu, CLI, "Using MQTT 3.1.1 protocol")
 					cm.ProtocolName = "MQTT"
 					cm.ProtocolVersion = 4
 				}
@@ -379,19 +382,19 @@ func (c *client) reconnect() {
 					c.conn = nil
 					//if the protocol version was explicitly set don't do any fallback
 					if c.options.protocolVersionExplicit {
-						ERROR.Println(CLI, "Connecting to", broker, "CONNACK was not Accepted, but rather", packets.ConnackReturnCodes[rc])
+						ERRORD.Dumpln(*c.milieu, CLI, "Connecting to", broker, "CONNACK was not Accepted, but rather", packets.ConnackReturnCodes[rc])
 						continue
 					}
 				}
 				break
 			} else {
-				ERROR.Println(CLI, err.Error())
-				WARN.Println(CLI, "failed to connect to broker, trying next")
+				ERRORD.Dumpln(*c.milieu, CLI, err.Error())
+				WARND.Dumpln(*c.milieu, CLI, "failed to connect to broker, trying next")
 				rc = packets.ErrNetworkError
 			}
 		}
 		if rc != 0 {
-			DEBUG.Println(CLI, "Reconnect failed, sleeping for", int(sleep.Seconds()), "seconds")
+			DEBUGD.Dumpln(*c.milieu, CLI, "Reconnect failed, sleeping for", int(sleep.Seconds()), "seconds")
 			time.Sleep(sleep)
 			if sleep < c.options.MaxReconnectInterval {
 				sleep *= 2
@@ -404,7 +407,7 @@ func (c *client) reconnect() {
 	}
 	// Disconnect() must have been called while we were trying to reconnect.
 	if c.connectionStatus() == disconnected {
-		DEBUG.Println(CLI, "Client moved to disconnected state while reconnecting, abandoning reconnect")
+		DEBUGD.Dumpln(*c.milieu, CLI, "Client moved to disconnected state while reconnecting, abandoning reconnect")
 		return
 	}
 
@@ -419,7 +422,7 @@ func (c *client) reconnect() {
 	}
 
 	c.setConnected(connected)
-	DEBUG.Println(CLI, "client is reconnected")
+	DEBUGD.Dumpln(*c.milieu, CLI, "client is reconnected")
 	if c.options.OnConnect != nil {
 		go c.options.OnConnect(c)
 	}
@@ -438,25 +441,25 @@ func (c *client) reconnect() {
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
 func (c *client) connect() (byte, bool) {
-	DEBUG.Println(NET, "connect started")
+	DEBUGD.Dumpln(*c.milieu, NET, "connect started")
 
 	ca, err := packets.ReadPacket(c.conn)
 	if err != nil {
-		ERROR.Println(NET, "connect got error", err)
+		ERRORD.Dumpln(*c.milieu, NET, "connect got error", err)
 		return packets.ErrNetworkError, false
 	}
 	if ca == nil {
-		ERROR.Println(NET, "received nil packet")
+		ERRORD.Dumpln(*c.milieu, NET, "received nil packet")
 		return packets.ErrNetworkError, false
 	}
 
 	msg, ok := ca.(*packets.ConnackPacket)
 	if !ok {
-		ERROR.Println(NET, "received msg that was not CONNACK")
+		ERRORD.Dumpln(*c.milieu, NET, "received msg that was not CONNACK")
 		return packets.ErrNetworkError, false
 	}
 
-	DEBUG.Println(NET, "received connack")
+	DEBUGD.Dumpln(*c.milieu, NET, "received connack")
 	return msg.ReturnCode, msg.SessionPresent
 }
 
@@ -466,7 +469,7 @@ func (c *client) connect() (byte, bool) {
 func (c *client) Disconnect(quiesce uint) {
 	status := atomic.LoadUint32(&c.status)
 	if status == connected {
-		DEBUG.Println(CLI, "disconnecting")
+		DEBUGD.Dumpln(*c.milieu, CLI, "disconnecting")
 		c.setConnected(disconnected)
 
 		dm := packets.NewControlPacket(packets.Disconnect).(*packets.DisconnectPacket)
@@ -476,7 +479,7 @@ func (c *client) Disconnect(quiesce uint) {
 		// wait for work to finish, or quiesce time consumed
 		dt.WaitTimeout(time.Duration(quiesce) * time.Millisecond)
 	} else {
-		WARN.Println(CLI, "Disconnect() called but not connected (disconnected/reconnecting)")
+		WARND.Dumpln(*c.milieu, CLI, "Disconnect() called but not connected (disconnected/reconnecting)")
 		c.setConnected(disconnected)
 	}
 
@@ -486,12 +489,12 @@ func (c *client) Disconnect(quiesce uint) {
 // ForceDisconnect will end the connection with the mqtt broker immediately.
 func (c *client) forceDisconnect() {
 	if !c.IsConnected() {
-		WARN.Println(CLI, "already disconnected")
+		WARND.Dumpln(*c.milieu, CLI, "already disconnected")
 		return
 	}
 	c.setConnected(disconnected)
 	c.conn.Close()
-	DEBUG.Println(CLI, "forcefully disconnecting")
+	DEBUGD.Dumpln(*c.milieu, CLI, "forcefully disconnecting")
 	c.disconnect()
 }
 
@@ -504,7 +507,7 @@ func (c *client) internalConnLost(err error) {
 		c.conn.Close()
 		c.workers.Wait()
 		if c.options.CleanSession && !c.options.AutoReconnect {
-			c.messageIds.cleanUp()
+			c.messageIds.cleanUp(c.milieu)
 		}
 		if c.options.AutoReconnect {
 			c.setConnected(reconnecting)
@@ -523,7 +526,7 @@ func (c *client) closeStop() {
 	defer c.Unlock()
 	select {
 	case <-c.stop:
-		DEBUG.Println("In disconnect and stop channel is already closed")
+		DEBUGD.Dumpln(*c.milieu, "In disconnect and stop channel is already closed")
 	default:
 		if c.stop != nil {
 			close(c.stop)
@@ -536,7 +539,7 @@ func (c *client) closeStopRouter() {
 	defer c.Unlock()
 	select {
 	case <-c.stopRouter:
-		DEBUG.Println("In disconnect and stop channel is already closed")
+		DEBUGD.Dumpln(*c.milieu, "In disconnect and stop channel is already closed")
 	default:
 		if c.stopRouter != nil {
 			close(c.stopRouter)
@@ -556,9 +559,9 @@ func (c *client) disconnect() {
 	c.closeStop()
 	c.closeConn()
 	c.workers.Wait()
-	c.messageIds.cleanUp()
+	c.messageIds.cleanUp(c.milieu)
 	c.closeStopRouter()
-	DEBUG.Println(CLI, "disconnected")
+	DEBUGD.Dumpln(*c.milieu, CLI, "disconnected")
 	c.persist.Close()
 }
 
@@ -567,7 +570,7 @@ func (c *client) disconnect() {
 // Returns a token to track delivery of the message to the broker
 func (c *client) Publish(topic string, qos byte, retained bool, payload interface{}) Token {
 	token := newToken(packets.Publish).(*PublishToken)
-	DEBUG.Println(CLI, "enter Publish")
+	DEBUGD.Dumpln(*c.milieu, CLI, "enter Publish")
 	switch {
 	case !c.IsConnected():
 		token.setError(ErrNotConnected)
@@ -594,11 +597,11 @@ func (c *client) Publish(topic string, qos byte, retained bool, payload interfac
 		pub.MessageID = c.getID(token)
 		token.messageID = pub.MessageID
 	}
-	persistOutbound(c.persist, pub)
+	persistOutbound(c.milieu, c.persist, pub)
 	if c.connectionStatus() == reconnecting {
-		DEBUG.Println(CLI, "storing publish message (reconnecting), topic:", topic)
+		DEBUGD.Dumpln(*c.milieu, CLI, "storing publish message (reconnecting), topic:", topic)
 	} else {
-		DEBUG.Println(CLI, "sending publish message, topic:", topic)
+		DEBUGD.Dumpln(*c.milieu, CLI, "sending publish message, topic:", topic)
 		c.obound <- &PacketAndToken{p: pub, t: token}
 	}
 	return token
@@ -608,7 +611,7 @@ func (c *client) Publish(topic string, qos byte, retained bool, payload interfac
 // a message is published on the topic provided.
 func (c *client) Subscribe(topic string, qos byte, callback MessageHandler) Token {
 	token := newToken(packets.Subscribe).(*SubscribeToken)
-	DEBUG.Println(CLI, "enter Subscribe")
+	DEBUGD.Dumpln(*c.milieu, CLI, "enter Subscribe")
 	if !c.IsConnected() {
 		token.setError(ErrNotConnected)
 		return token
@@ -620,7 +623,7 @@ func (c *client) Subscribe(topic string, qos byte, callback MessageHandler) Toke
 	}
 	sub.Topics = append(sub.Topics, topic)
 	sub.Qoss = append(sub.Qoss, qos)
-	DEBUG.Println(CLI, sub.String())
+	DEBUGD.Dumpln(*c.milieu, CLI, sub.String())
 
 	if strings.HasPrefix(topic, "$share") {
 		topic = strings.Join(strings.Split(topic, "/")[2:], "/")
@@ -632,7 +635,7 @@ func (c *client) Subscribe(topic string, qos byte, callback MessageHandler) Toke
 
 	token.subs = append(token.subs, topic)
 	c.oboundP <- &PacketAndToken{p: sub, t: token}
-	DEBUG.Println(CLI, "exit Subscribe")
+	DEBUGD.Dumpln(*c.milieu, CLI, "exit Subscribe")
 	return token
 }
 
@@ -641,7 +644,7 @@ func (c *client) Subscribe(topic string, qos byte, callback MessageHandler) Toke
 func (c *client) SubscribeMultiple(filters map[string]byte, callback MessageHandler) Token {
 	var err error
 	token := newToken(packets.Subscribe).(*SubscribeToken)
-	DEBUG.Println(CLI, "enter SubscribeMultiple")
+	DEBUGD.Dumpln(*c.milieu, CLI, "enter SubscribeMultiple")
 	if !c.IsConnected() {
 		token.setError(ErrNotConnected)
 		return token
@@ -660,7 +663,7 @@ func (c *client) SubscribeMultiple(filters map[string]byte, callback MessageHand
 	token.subs = make([]string, len(sub.Topics))
 	copy(token.subs, sub.Topics)
 	c.oboundP <- &PacketAndToken{p: sub, t: token}
-	DEBUG.Println(CLI, "exit SubscribeMultiple")
+	DEBUGD.Dumpln(*c.milieu, CLI, "exit SubscribeMultiple")
 	return token
 }
 
@@ -679,18 +682,18 @@ func (c *client) resume(subscription bool) {
 			switch packet.(type) {
 			case *packets.SubscribePacket:
 				if subscription {
-					DEBUG.Println(STR, fmt.Sprintf("loaded pending subscribe (%d)", details.MessageID))
+					DEBUGD.Dumpln(*c.milieu, STR, fmt.Sprintf("loaded pending subscribe (%d)", details.MessageID))
 					token := newToken(packets.Subscribe).(*SubscribeToken)
 					c.oboundP <- &PacketAndToken{p: packet, t: token}
 				}
 			case *packets.UnsubscribePacket:
 				if subscription {
-					DEBUG.Println(STR, fmt.Sprintf("loaded pending unsubscribe (%d)", details.MessageID))
+					DEBUGD.Dumpln(*c.milieu, STR, fmt.Sprintf("loaded pending unsubscribe (%d)", details.MessageID))
 					token := newToken(packets.Unsubscribe).(*UnsubscribeToken)
 					c.oboundP <- &PacketAndToken{p: packet, t: token}
 				}
 			case *packets.PubrelPacket:
-				DEBUG.Println(STR, fmt.Sprintf("loaded pending pubrel (%d)", details.MessageID))
+				DEBUGD.Dumpln(*c.milieu, STR, fmt.Sprintf("loaded pending pubrel (%d)", details.MessageID))
 				select {
 				case c.oboundP <- &PacketAndToken{p: packet, t: nil}:
 				case <-c.stop:
@@ -699,23 +702,23 @@ func (c *client) resume(subscription bool) {
 				token := newToken(packets.Publish).(*PublishToken)
 				token.messageID = details.MessageID
 				c.claimID(token, details.MessageID)
-				DEBUG.Println(STR, fmt.Sprintf("loaded pending publish (%d)", details.MessageID))
-				DEBUG.Println(STR, details)
+				DEBUGD.Dumpln(*c.milieu, STR, fmt.Sprintf("loaded pending publish (%d)", details.MessageID))
+				DEBUGD.Dumpln(*c.milieu, STR, details)
 				c.obound <- &PacketAndToken{p: packet, t: token}
 			default:
-				ERROR.Println(STR, "invalid message type in store (discarded)")
+				ERRORD.Dumpln(*c.milieu, STR, "invalid message type in store (discarded)")
 				c.persist.Del(key)
 			}
 		} else {
 			switch packet.(type) {
 			case *packets.PubrelPacket, *packets.PublishPacket:
-				DEBUG.Println(STR, fmt.Sprintf("loaded pending incomming (%d)", details.MessageID))
+				DEBUGD.Dumpln(*c.milieu, STR, fmt.Sprintf("loaded pending incomming (%d)", details.MessageID))
 				select {
 				case c.ibound <- packet:
 				case <-c.stop:
 				}
 			default:
-				ERROR.Println(STR, "invalid message type in store (discarded)")
+				ERRORD.Dumpln(*c.milieu, STR, "invalid message type in store (discarded)")
 				c.persist.Del(key)
 			}
 		}
@@ -727,7 +730,7 @@ func (c *client) resume(subscription bool) {
 // received.
 func (c *client) Unsubscribe(topics ...string) Token {
 	token := newToken(packets.Unsubscribe).(*UnsubscribeToken)
-	DEBUG.Println(CLI, "enter Unsubscribe")
+	DEBUGD.Dumpln(*c.milieu, CLI, "enter Unsubscribe")
 	if !c.IsConnected() {
 		token.setError(ErrNotConnected)
 		return token
@@ -741,7 +744,7 @@ func (c *client) Unsubscribe(topics ...string) Token {
 		c.msgRouter.deleteRoute(topic)
 	}
 
-	DEBUG.Println(CLI, "exit Unsubscribe")
+	DEBUGD.Dumpln(*c.milieu, CLI, "exit Unsubscribe")
 	return token
 }
 

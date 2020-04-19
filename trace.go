@@ -25,10 +25,32 @@ type (
 	// NOOPLogger implements the logger that does not perform any operation
 	// by default. This allows us to efficiently discard the unwanted messages.
 	NOOPLogger struct{}
+
+	Debugger interface {
+		Dumpln(m Milieu, v ...interface{})
+		Dumpf(m Milieu, format string, v ...interface{})
+	}
+	Milieu struct {
+		Broker string
+		Client
+	}
+
+	PassthroughDebugger struct {
+		receiver *Logger
+	}
 )
 
-func (NOOPLogger) Println(v ...interface{}) {}
+func (NOOPLogger) Println(v ...interface{})               {}
 func (NOOPLogger) Printf(format string, v ...interface{}) {}
+
+func (p PassthroughDebugger) Dumpln(m Milieu, v ...interface{}) {
+	deref := *p.receiver
+	deref.Println(v...)
+}
+func (p PassthroughDebugger) Dumpf(m Milieu, format string, v ...interface{}) {
+	deref := *p.receiver
+	deref.Printf(format, v...)
+}
 
 // Internal levels of library output that are initialised to not print
 // anything but can be overridden by programmer
@@ -37,4 +59,9 @@ var (
 	CRITICAL Logger = NOOPLogger{}
 	WARN     Logger = NOOPLogger{}
 	DEBUG    Logger = NOOPLogger{}
+
+	ERRORD    Debugger = PassthroughDebugger{&ERROR}
+	CRITICALD Debugger = PassthroughDebugger{&CRITICAL}
+	WARND     Debugger = PassthroughDebugger{&WARN}
+	DEBUGD    Debugger = PassthroughDebugger{&DEBUG}
 )

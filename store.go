@@ -71,7 +71,7 @@ func outboundKeyFromMID(id uint16) string {
 }
 
 // govern which outgoing messages are persisted
-func persistOutbound(s Store, m packets.ControlPacket) {
+func persistOutbound(milieu *Milieu, s Store, m packets.ControlPacket) {
 	switch m.Details().Qos {
 	case 0:
 		switch m.(type) {
@@ -87,7 +87,7 @@ func persistOutbound(s Store, m packets.ControlPacket) {
 			// until puback received
 			s.Put(outboundKeyFromMID(m.Details().MessageID), m)
 		default:
-			ERROR.Println(STR, "Asked to persist an invalid message type")
+			ERRORD.Dumpln(*milieu, STR, "Asked to persist an invalid message type")
 		}
 	case 2:
 		switch m.(type) {
@@ -96,13 +96,13 @@ func persistOutbound(s Store, m packets.ControlPacket) {
 			// until pubrel received
 			s.Put(outboundKeyFromMID(m.Details().MessageID), m)
 		default:
-			ERROR.Println(STR, "Asked to persist an invalid message type")
+			ERRORD.Dumpln(*milieu, STR, "Asked to persist an invalid message type")
 		}
 	}
 }
 
 // govern which incoming messages are persisted
-func persistInbound(s Store, m packets.ControlPacket) {
+func persistInbound(milieu *Milieu, s Store, m packets.ControlPacket) {
 	switch m.Details().Qos {
 	case 0:
 		switch m.(type) {
@@ -112,7 +112,7 @@ func persistInbound(s Store, m packets.ControlPacket) {
 			s.Del(outboundKeyFromMID(m.Details().MessageID))
 		case *packets.PublishPacket, *packets.PubrecPacket, *packets.PingrespPacket, *packets.ConnackPacket:
 		default:
-			ERROR.Println(STR, "Asked to persist an invalid messages type")
+			ERRORD.Dumpln(*milieu, STR, "Asked to persist an invalid messages type")
 		}
 	case 1:
 		switch m.(type) {
@@ -121,7 +121,7 @@ func persistInbound(s Store, m packets.ControlPacket) {
 			// until puback sent
 			s.Put(inboundKeyFromMID(m.Details().MessageID), m)
 		default:
-			ERROR.Println(STR, "Asked to persist an invalid messages type")
+			ERRORD.Dumpln(*milieu, STR, "Asked to persist an invalid messages type")
 		}
 	case 2:
 		switch m.(type) {
@@ -130,7 +130,7 @@ func persistInbound(s Store, m packets.ControlPacket) {
 			// until pubrel received
 			s.Put(inboundKeyFromMID(m.Details().MessageID), m)
 		default:
-			ERROR.Println(STR, "Asked to persist an invalid messages type")
+			ERRORD.Dumpln(*milieu, STR, "Asked to persist an invalid messages type")
 		}
 	}
 }
