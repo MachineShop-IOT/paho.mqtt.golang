@@ -160,8 +160,6 @@ func (c *client) AddRoute(topic string, callback MessageHandler) {
 // IsConnected returns a bool signifying whether
 // the client is connected or not.
 func (c *client) IsConnected() bool {
-	c.RLock()
-	defer c.RUnlock()
 	status := atomic.LoadUint32(&c.status)
 	switch {
 	case status == connected:
@@ -176,8 +174,6 @@ func (c *client) IsConnected() bool {
 // IsConnectionOpen return a bool signifying whether the client has an active
 // connection to mqtt broker, i.e not in disconnected or reconnect mode
 func (c *client) IsConnectionOpen() bool {
-	c.RLock()
-	defer c.RUnlock()
 	status := atomic.LoadUint32(&c.status)
 	switch {
 	case status == connected:
@@ -188,8 +184,6 @@ func (c *client) IsConnectionOpen() bool {
 }
 
 func (c *client) connectionStatus() uint32 {
-	c.RLock()
-	defer c.RUnlock()
 	status := atomic.LoadUint32(&c.status)
 	return status
 }
